@@ -8,26 +8,37 @@ import nodemailer from "nodemailer";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT; // 🔥 RENDER MUST
 const JWT_SECRET = process.env.JWT_SECRET;
 
 /* =====================
    MIDDLEWARE
 ===================== */
-app.use(cors({ origin: "*", methods: ["GET", "POST", "DELETE"] }));
+app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
 app.use(express.json());
 
 /* =====================
-   FILES
+   FILE PATHS
 ===================== */
 const USERS_FILE = "./users.json";
 const OTP_FILE = "./otps.json";
 
 /* =====================
+   ENSURE FILES (RENDER SAFE)
+===================== */
+const ensureFile = (file) => {
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, "[]");
+  }
+};
+
+ensureFile(USERS_FILE);
+ensureFile(OTP_FILE);
+
+/* =====================
    HELPERS
 ===================== */
 const readJSON = (file) => {
-  if (!fs.existsSync(file)) return [];
   const data = fs.readFileSync(file, "utf-8");
   return data ? JSON.parse(data) : [];
 };
@@ -36,7 +47,9 @@ const writeJSON = (file, data) => {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 };
 
-// ✅ UNIQUE BGMI ID
+/* =====================
+   UNIQUE BGMI ID
+===================== */
 const generateUniqueBGMIId = (users) => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let id;
@@ -68,7 +81,7 @@ const authMiddleware = (req, res, next) => {
 };
 
 /* =====================
-   SMTP (BREVO) ✅
+   SMTP (BREVO)
 ===================== */
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,          // smtp-relay.brevo.com
@@ -84,7 +97,7 @@ const transporter = nodemailer.createTransport({
 });
 
 /* =====================
-   SEND OTP (REAL EMAIL)
+   SEND OTP
 ===================== */
 app.post("/auth/send-otp", async (req, res) => {
   try {
@@ -100,7 +113,7 @@ app.post("/auth/send-otp", async (req, res) => {
     console.log("📧 Sending OTP to:", email);
 
     const info = await transporter.sendMail({
-      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`, // 🔥 MUST be Brevo verified
+      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`, // VERIFIED SENDER
       to: email,
       subject: "BGMI OTP Verification",
       html: `
@@ -145,7 +158,7 @@ app.post("/auth/verify-otp", (req, res) => {
     profile_id: generateUniqueBGMIId(users),
     name,
     email,
-    password_plain: password,
+    password_plain: password, // (bcrypt later)
     created_at: new Date().toISOString(),
   };
 
@@ -190,8 +203,8 @@ app.get("/me", authMiddleware, (req, res) => {
 });
 
 /* =====================
-   START SERVER
+   START SERVER (RENDER SAFE)
 ===================== */
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log("✅ User server running on port", PORT);
 });
