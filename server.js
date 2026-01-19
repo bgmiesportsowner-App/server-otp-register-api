@@ -8,13 +8,18 @@ import nodemailer from "nodemailer";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT; // 🔥 RENDER MUST
+const PORT = process.env.PORT || 10000; // 🔥 Render safe
 const JWT_SECRET = process.env.JWT_SECRET;
 
 /* =====================
    MIDDLEWARE
 ===================== */
-app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
+app.use(
+  cors({
+    origin: "*", // production me chaaho to specific domain dal dena
+    methods: ["GET", "POST"],
+  })
+);
 app.use(express.json());
 
 /* =====================
@@ -24,14 +29,13 @@ const USERS_FILE = "./users.json";
 const OTP_FILE = "./otps.json";
 
 /* =====================
-   ENSURE FILES (RENDER SAFE)
+   ENSURE FILES
 ===================== */
 const ensureFile = (file) => {
   if (!fs.existsSync(file)) {
     fs.writeFileSync(file, "[]");
   }
 };
-
 ensureFile(USERS_FILE);
 ensureFile(OTP_FILE);
 
@@ -39,8 +43,12 @@ ensureFile(OTP_FILE);
    HELPERS
 ===================== */
 const readJSON = (file) => {
-  const data = fs.readFileSync(file, "utf-8");
-  return data ? JSON.parse(data) : [];
+  try {
+    const data = fs.readFileSync(file, "utf-8");
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
 };
 
 const writeJSON = (file, data) => {
@@ -59,7 +67,7 @@ const generateUniqueBGMIId = (users) => {
       code += chars[Math.floor(Math.random() * chars.length)];
     }
     id = `BGMI-${code}`;
-  } while (users.some(u => u.profile_id === id));
+  } while (users.some((u) => u.profile_id === id));
   return id;
 };
 
@@ -84,16 +92,21 @@ const authMiddleware = (req, res, next) => {
    SMTP (BREVO)
 ===================== */
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,          // smtp-relay.brevo.com
-  port: Number(process.env.SMTP_PORT),  // 587
+  host: process.env.SMTP_HOST, // smtp-relay.brevo.com
+  port: Number(process.env.SMTP_PORT), // 587
   secure: false,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  tls: {
-    rejectUnauthorized: false,
-  },
+  tls: { rejectUnauthorized: false },
+});
+
+/* =====================
+   HEALTH CHECK
+===================== */
+app.get("/", (req, res) => {
+  res.json({ status: "OK", service: "BGMI OTP API" });
 });
 
 /* =====================
@@ -106,14 +119,14 @@ app.post("/auth/send-otp", async (req, res) => {
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    const otps = readJSON(OTP_FILE).filter(o => o.email !== email);
+    const otps = readJSON(OTP_FILE).filter((o) => o.email !== email);
     otps.push({ email, otp, expires: Date.now() + 5 * 60 * 1000 });
     writeJSON(OTP_FILE, otps);
 
     console.log("📧 Sending OTP to:", email);
 
-    const info = await transporter.sendMail({
-      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`, // VERIFIED SENDER
+    await transporter.sendMail({
+      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`, // MUST be verified in Brevo
       to: email,
       subject: "BGMI OTP Verification",
       html: `
@@ -125,11 +138,10 @@ app.post("/auth/send-otp", async (req, res) => {
       `,
     });
 
-    console.log("✅ Email sent:", info.messageId);
+    console.log("✅ OTP sent successfully");
     res.json({ success: true });
-
   } catch (err) {
-    console.error("❌ OTP ERROR:", err);
+    console.error("❌ OTP ERROR:", err.message);
     res.status(500).json({ error: "OTP send failed" });
   }
 });
@@ -144,13 +156,13 @@ app.post("/auth/verify-otp", (req, res) => {
 
   const otps = readJSON(OTP_FILE);
   const record = otps.find(
-    o => o.email === email && o.otp === code && o.expires > Date.now()
+    (o) => o.email === email && o.otp === code && o.expires > Date.now()
   );
   if (!record)
     return res.status(400).json({ error: "Invalid or expired OTP" });
 
   const users = readJSON(USERS_FILE);
-  if (users.find(u => u.email === email))
+  if (users.find((u) => u.email === email))
     return res.status(400).json({ error: "User already exists" });
 
   const user = {
@@ -158,13 +170,13 @@ app.post("/auth/verify-otp", (req, res) => {
     profile_id: generateUniqueBGMIId(users),
     name,
     email,
-    password_plain: password, // (bcrypt later)
+    password_plain: password, // bcrypt later
     created_at: new Date().toISOString(),
   };
 
   users.push(user);
   writeJSON(USERS_FILE, users);
-  writeJSON(OTP_FILE, otps.filter(o => o.email !== email));
+  writeJSON(OTP_FILE, otps.filter((o) => o.email !== email));
 
   const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
   res.json({ success: true, user, token });
@@ -176,8 +188,9 @@ app.post("/auth/verify-otp", (req, res) => {
 app.post("/auth/login", (req, res) => {
   const { email, password } = req.body;
   const users = readJSON(USERS_FILE);
+
   const user = users.find(
-    u => u.email === email && u.password_plain === password
+    (u) => u.email === email && u.password_plain === password
   );
   if (!user)
     return res.status(401).json({ error: "Invalid credentials" });
@@ -191,7 +204,7 @@ app.post("/auth/login", (req, res) => {
 ===================== */
 app.get("/me", authMiddleware, (req, res) => {
   const users = readJSON(USERS_FILE);
-  const user = users.find(u => u.id === req.userId);
+  const user = users.find((u) => u.id === req.userId);
   if (!user) return res.status(404).json({ error: "User not found" });
 
   res.json({
@@ -203,7 +216,7 @@ app.get("/me", authMiddleware, (req, res) => {
 });
 
 /* =====================
-   START SERVER (RENDER SAFE)
+   START SERVER
 ===================== */
 app.listen(PORT, "0.0.0.0", () => {
   console.log("✅ User server running on port", PORT);
