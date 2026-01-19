@@ -70,7 +70,7 @@ const authMiddleware = (req, res, next) => {
 };
 
 /* =====================
-   SMTP (BREVO)
+   SMTP (BREVO) - RENDER SAFE
 ===================== */
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
@@ -83,7 +83,7 @@ const transporter = nodemailer.createTransport({
 });
 
 /* =====================
-   SEND OTP
+   SEND OTP - HYBRID MODE (BEST FOR BGMI) ✅
 ===================== */
 app.post("/auth/send-otp", async (req, res) => {
   try {
@@ -96,6 +96,30 @@ app.post("/auth/send-otp", async (req, res) => {
     otps.push({ email, otp, expires: Date.now() + 5 * 60 * 1000 });
     writeJSON(OTP_FILE, otps);
 
+    // 🔥 HYBRID MODE - TRY EMAIL FIRST, FAIL = SCREEN OTP
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        // TRY Brevo SMTP
+        await transporter.sendMail({
+          from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`,
+          to: email,
+          subject: "BGMI Tournament OTP",
+          html: `<h2>BGMI Tournament Verification</h2><h1 style="font-size: 48px; color: #ff4444;">${otp}</h1><p>Valid for 5 minutes only</p>`,
+        });
+        console.log(`✅ REAL EMAIL sent to ${email}`);
+        return res.json({ success: true, message: "Check your email for OTP!" });
+      } catch (emailError) {
+        // EMAIL FAIL → SCREEN OTP (RENDER SAFE)
+        console.log(`❌ Email failed for ${email}, using SCREEN OTP: ${otp}`);
+        return res.json({ 
+          success: true, 
+          otp: otp,
+          message: `Email delivery failed! Use this OTP: <strong>${otp}</strong>`
+        });
+      }
+    }
+
+    // Local development - Real email
     await transporter.sendMail({
       from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`,
       to: email,
@@ -103,9 +127,10 @@ app.post("/auth/send-otp", async (req, res) => {
       html: `<h2>Your OTP</h2><h1>${otp}</h1><p>Valid for 5 minutes</p>`,
     });
 
+    console.log(`✅ Local email sent to ${email}`);
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error("OTP ERROR:", err);
     res.status(500).json({ error: "OTP send failed" });
   }
 });
@@ -131,10 +156,10 @@ app.post("/auth/verify-otp", (req, res) => {
 
   const user = {
     id: Date.now(),
-    profile_id: generateUniqueBGMIId(users), // 🔥 FIXED
+    profile_id: generateUniqueBGMIId(users),
     name,
     email,
-    password_plain: password, // ⚠️ as you want
+    password_plain: password,
     created_at: new Date().toISOString(),
   };
 
@@ -164,7 +189,7 @@ app.post("/auth/login", (req, res) => {
 });
 
 /* =====================
-   USER PROFILE (APP USES THIS)
+   USER PROFILE
 ===================== */
 app.get("/me", authMiddleware, (req, res) => {
   const users = readJSON(USERS_FILE);
@@ -197,6 +222,6 @@ app.delete("/admin/users/:id", (req, res) => {
 /* =====================
    START
 ===================== */
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log("✅ User server running on port", PORT);
 });
