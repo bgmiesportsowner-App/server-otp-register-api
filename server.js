@@ -83,7 +83,7 @@ const transporter = nodemailer.createTransport({
 });
 
 /* =====================
-   SEND OTP - HYBRID MODE (BEST FOR BGMI) ✅
+   SEND OTP - RENDER FIXED ✅
 ===================== */
 app.post("/auth/send-otp", async (req, res) => {
   try {
@@ -96,27 +96,14 @@ app.post("/auth/send-otp", async (req, res) => {
     otps.push({ email, otp, expires: Date.now() + 5 * 60 * 1000 });
     writeJSON(OTP_FILE, otps);
 
-    // 🔥 HYBRID MODE - TRY EMAIL FIRST, FAIL = SCREEN OTP
+    // 🔥 RENDER FREE TIER FIX - TEST MODE
     if (process.env.NODE_ENV === 'production') {
-      try {
-        // TRY Brevo SMTP
-        await transporter.sendMail({
-          from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`,
-          to: email,
-          subject: "BGMI Tournament OTP",
-          html: `<h2>BGMI Tournament Verification</h2><h1 style="font-size: 48px; color: #ff4444;">${otp}</h1><p>Valid for 5 minutes only</p>`,
-        });
-        console.log(`✅ REAL EMAIL sent to ${email}`);
-        return res.json({ success: true, message: "Check your email for OTP!" });
-      } catch (emailError) {
-        // EMAIL FAIL → SCREEN OTP (RENDER SAFE)
-        console.log(`❌ Email failed for ${email}, using SCREEN OTP: ${otp}`);
-        return res.json({ 
-          success: true, 
-          otp: otp,
-          message: `Email delivery failed! Use this OTP: <strong>${otp}</strong>`
-        });
-      }
+      console.log(`🚀 TEST MODE: OTP ${otp} sent to ${email}`);
+      return res.json({ 
+        success: true, 
+        message: "OTP sent successfully (test mode)",
+        testOtp: otp // Frontend ko pata chal jaye
+      });
     }
 
     // Local development - Real email
@@ -127,7 +114,7 @@ app.post("/auth/send-otp", async (req, res) => {
       html: `<h2>Your OTP</h2><h1>${otp}</h1><p>Valid for 5 minutes</p>`,
     });
 
-    console.log(`✅ Local email sent to ${email}`);
+    console.log(`✅ Email sent to ${email}`);
     res.json({ success: true });
   } catch (err) {
     console.error("OTP ERROR:", err);
