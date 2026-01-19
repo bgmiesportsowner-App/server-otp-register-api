@@ -36,11 +36,10 @@ const writeJSON = (file, data) => {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 };
 
-// ✅ ALWAYS UNIQUE BGMI ID
+// ✅ UNIQUE BGMI ID
 const generateUniqueBGMIId = (users) => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let id;
-
   do {
     let code = "";
     for (let i = 0; i < 5; i++) {
@@ -48,7 +47,6 @@ const generateUniqueBGMIId = (users) => {
     }
     id = `BGMI-${code}`;
   } while (users.some(u => u.profile_id === id));
-
   return id;
 };
 
@@ -70,20 +68,23 @@ const authMiddleware = (req, res, next) => {
 };
 
 /* =====================
-   SMTP (BREVO) - RENDER SAFE
+   SMTP (BREVO) ✅
 ===================== */
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
+  host: process.env.SMTP_HOST,          // smtp-relay.brevo.com
+  port: Number(process.env.SMTP_PORT),  // 587
   secure: false,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  tls: {
+    rejectUnauthorized: false,
+  },
 });
 
 /* =====================
-   SEND OTP - RENDER FIXED ✅
+   SEND OTP (REAL EMAIL)
 ===================== */
 app.post("/auth/send-otp", async (req, res) => {
   try {
@@ -96,28 +97,26 @@ app.post("/auth/send-otp", async (req, res) => {
     otps.push({ email, otp, expires: Date.now() + 5 * 60 * 1000 });
     writeJSON(OTP_FILE, otps);
 
-    // 🔥 RENDER FREE TIER FIX - TEST MODE
-    if (process.env.NODE_ENV === 'production') {
-      console.log(`🚀 TEST MODE: OTP ${otp} sent to ${email}`);
-      return res.json({ 
-        success: true, 
-        message: "OTP sent successfully (test mode)",
-        testOtp: otp // Frontend ko pata chal jaye
-      });
-    }
+    console.log("📧 Sending OTP to:", email);
 
-    // Local development - Real email
-    await transporter.sendMail({
-      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`,
+    const info = await transporter.sendMail({
+      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`, // 🔥 MUST be Brevo verified
       to: email,
       subject: "BGMI OTP Verification",
-      html: `<h2>Your OTP</h2><h1>${otp}</h1><p>Valid for 5 minutes</p>`,
+      html: `
+        <div style="font-family:Arial">
+          <h2>BGMI OTP Verification</h2>
+          <h1>${otp}</h1>
+          <p>OTP valid for 5 minutes</p>
+        </div>
+      `,
     });
 
-    console.log(`✅ Email sent to ${email}`);
+    console.log("✅ Email sent:", info.messageId);
     res.json({ success: true });
+
   } catch (err) {
-    console.error("OTP ERROR:", err);
+    console.error("❌ OTP ERROR:", err);
     res.status(500).json({ error: "OTP send failed" });
   }
 });
@@ -163,7 +162,6 @@ app.post("/auth/verify-otp", (req, res) => {
 ===================== */
 app.post("/auth/login", (req, res) => {
   const { email, password } = req.body;
-
   const users = readJSON(USERS_FILE);
   const user = users.find(
     u => u.email === email && u.password_plain === password
@@ -181,7 +179,6 @@ app.post("/auth/login", (req, res) => {
 app.get("/me", authMiddleware, (req, res) => {
   const users = readJSON(USERS_FILE);
   const user = users.find(u => u.id === req.userId);
-
   if (!user) return res.status(404).json({ error: "User not found" });
 
   res.json({
@@ -193,22 +190,8 @@ app.get("/me", authMiddleware, (req, res) => {
 });
 
 /* =====================
-   ADMIN APIs
+   START SERVER
 ===================== */
-app.get("/admin/users", (req, res) => {
-  res.json(readJSON(USERS_FILE));
-});
-
-app.delete("/admin/users/:id", (req, res) => {
-  const id = Number(req.params.id);
-  const users = readJSON(USERS_FILE).filter(u => u.id !== id);
-  writeJSON(USERS_FILE, users);
-  res.json({ success: true });
-});
-
-/* =====================
-   START
-===================== */
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log("✅ User server running on port", PORT);
 });
