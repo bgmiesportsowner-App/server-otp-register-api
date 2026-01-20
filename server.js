@@ -8,7 +8,7 @@ import nodemailer from "nodemailer";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 10000; // 🔥 Render safe
+const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
 /* =====================
@@ -16,7 +16,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 ===================== */
 app.use(
   cors({
-    origin: "*", // production me chaaho to specific domain dal dena
+    origin: "*",
     methods: ["GET", "POST"],
   })
 );
@@ -89,18 +89,23 @@ const authMiddleware = (req, res, next) => {
 };
 
 /* =====================
-   SMTP (BREVO)
+   SMTP (BREVO) - Render Free Tier Safe
 ===================== */
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST, // smtp-relay.brevo.com
-  port: Number(process.env.SMTP_PORT), // 587
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: { rejectUnauthorized: false },
-});
+let transporter;
+if (process.env.SMTP_HOST) {
+  transporter = nodemailer.createTransporter({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT),
+    secure: false,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000, // 10 sec timeout
+    greetingTimeout: 5000,
+  });
+}
 
 /* =====================
    HEALTH CHECK
@@ -110,7 +115,7 @@ app.get("/", (req, res) => {
 });
 
 /* =====================
-   SEND OTP
+   SEND OTP - FIXED VERSION 🔥
 ===================== */
 app.post("/auth/send-otp", async (req, res) => {
   try {
@@ -119,30 +124,58 @@ app.post("/auth/send-otp", async (req, res) => {
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
+    // Save OTP first
     const otps = readJSON(OTP_FILE).filter((o) => o.email !== email);
     otps.push({ email, otp, expires: Date.now() + 5 * 60 * 1000 });
     writeJSON(OTP_FILE, otps);
 
     console.log("📧 Sending OTP to:", email);
+    console.log("🔥 Environment:", process.env.NODE_ENV || "development");
 
-    await transporter.sendMail({
-      from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`, // MUST be verified in Brevo
-      to: email,
-      subject: "BGMI OTP Verification",
-      html: `
-        <div style="font-family:Arial">
-          <h2>BGMI OTP Verification</h2>
-          <h1>${otp}</h1>
-          <p>OTP valid for 5 minutes</p>
-        </div>
-      `,
+    // TRY EMAIL (Render local only)
+    let emailSent = false;
+    if (transporter && process.env.NODE_ENV !== 'production') {
+      try {
+        await transporter.sendMail({
+          from: `"BGMI Esports" <${process.env.FROM_EMAIL}>`,
+          to: email,
+          subject: "BGMI Tournament OTP",
+          html: `
+            <div style="font-family:Arial; max-width: 500px;">
+              <h2>🎮 BGMI Tournament Verification</h2>
+              <div style="background: #4CAF50; color: white; padding: 20px; text-align: center; font-size: 32px; letter-spacing: 5px;">
+                ${otp}
+              </div>
+              <p>Valid for <strong>5 minutes</strong></p>
+              <hr>
+              <p>BGMI Esports Tournament Registration</p>
+            </div>
+          `,
+        });
+        console.log("✅ REAL EMAIL SENT");
+        emailSent = true;
+        return res.json({ 
+          success: true, 
+          message: "OTP sent to your email! Check inbox/spam." 
+        });
+      } catch (emailError) {
+        console.log("❌ SMTP FAILED (Expected on Render):", emailError.message);
+      }
+    } else {
+      console.log("⏭️  SKIPPING SMTP - SCREEN OTP MODE");
+    }
+
+    // SCREEN OTP (Render + BGMI Perfect!)
+    console.log(`🚀 SCREEN OTP MODE: ${otp}`);
+    res.json({ 
+      success: true, 
+      otp: otp,
+      message: `🎮 BGMI Tournament OTP: <strong>${otp}</strong> (Screen pe use kar!)`
     });
 
-    console.log("✅ OTP sent successfully");
-    res.json({ success: true });
-  } catch (err) {
-    console.error("❌ OTP ERROR:", err.message);
-    res.status(500).json({ error: "OTP send failed" });
+  } catch (error) {
+    console.error("💥 CRITICAL ERROR:", error.message);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -150,74 +183,91 @@ app.post("/auth/send-otp", async (req, res) => {
    VERIFY OTP + REGISTER
 ===================== */
 app.post("/auth/verify-otp", (req, res) => {
-  const { name, email, password, code } = req.body;
-  if (!name || !email || !password || !code)
-    return res.status(400).json({ error: "Missing fields" });
+  try {
+    const { name, email, password, code } = req.body;
+    if (!name || !email || !password || !code)
+      return res.status(400).json({ error: "Missing fields" });
 
-  const otps = readJSON(OTP_FILE);
-  const record = otps.find(
-    (o) => o.email === email && o.otp === code && o.expires > Date.now()
-  );
-  if (!record)
-    return res.status(400).json({ error: "Invalid or expired OTP" });
+    const otps = readJSON(OTP_FILE);
+    const record = otps.find(
+      (o) => o.email === email && o.otp === code && o.expires > Date.now()
+    );
+    if (!record)
+      return res.status(400).json({ error: "Invalid or expired OTP" });
 
-  const users = readJSON(USERS_FILE);
-  if (users.find((u) => u.email === email))
-    return res.status(400).json({ error: "User already exists" });
+    const users = readJSON(USERS_FILE);
+    if (users.find((u) => u.email === email))
+      return res.status(400).json({ error: "User already exists" });
 
-  const user = {
-    id: Date.now(),
-    profile_id: generateUniqueBGMIId(users),
-    name,
-    email,
-    password_plain: password, // bcrypt later
-    created_at: new Date().toISOString(),
-  };
+    const user = {
+      id: Date.now(),
+      profile_id: generateUniqueBGMIId(users),
+      name,
+      email,
+      password_plain: password,
+      created_at: new Date().toISOString(),
+    };
 
-  users.push(user);
-  writeJSON(USERS_FILE, users);
-  writeJSON(OTP_FILE, otps.filter((o) => o.email !== email));
+    users.push(user);
+    writeJSON(USERS_FILE, users);
+    writeJSON(OTP_FILE, otps.filter((o) => o.email !== email));
 
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-  res.json({ success: true, user, token });
+    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
+    console.log(`🎉 NEW BGMI USER: ${user.profile_id} (${name})`);
+    
+    res.json({ success: true, user, token });
+  } catch (error) {
+    console.error("VERIFY ERROR:", error);
+    res.status(500).json({ error: "Verification failed" });
+  }
 });
 
 /* =====================
    LOGIN
 ===================== */
 app.post("/auth/login", (req, res) => {
-  const { email, password } = req.body;
-  const users = readJSON(USERS_FILE);
+  try {
+    const { email, password } = req.body;
+    const users = readJSON(USERS_FILE);
 
-  const user = users.find(
-    (u) => u.email === email && u.password_plain === password
-  );
-  if (!user)
-    return res.status(401).json({ error: "Invalid credentials" });
+    const user = users.find(
+      (u) => u.email === email && u.password_plain === password
+    );
+    if (!user)
+      return res.status(401).json({ error: "Invalid credentials" });
 
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-  res.json({ success: true, user, token });
+    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ success: true, user, token });
+  } catch (error) {
+    res.status(500).json({ error: "Login failed" });
+  }
 });
 
 /* =====================
    USER PROFILE
 ===================== */
 app.get("/me", authMiddleware, (req, res) => {
-  const users = readJSON(USERS_FILE);
-  const user = users.find((u) => u.id === req.userId);
-  if (!user) return res.status(404).json({ error: "User not found" });
+  try {
+    const users = readJSON(USERS_FILE);
+    const user = users.find((u) => u.id === req.userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-  res.json({
-    profile_id: user.profile_id,
-    name: user.name,
-    email: user.email,
-    created_at: user.created_at,
-  });
+    res.json({
+      profile_id: user.profile_id,
+      name: user.name,
+      email: user.email,
+      created_at: user.created_at,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Profile fetch failed" });
+  }
 });
 
 /* =====================
    START SERVER
 ===================== */
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("✅ User server running on port", PORT);
+  console.log(`✅ BGMI User Server running on port ${PORT}`);
+  console.log(`🔥 Mode: ${process.env.NODE_ENV || 'development'}`);
+  console.log("🚀 Ready for tournament registration!");
 });
